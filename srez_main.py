@@ -13,23 +13,23 @@ import tensorflow as tf
 FLAGS = tf.app.flags.FLAGS
 
 # Configuration (alphabetically)
-tf.app.flags.DEFINE_integer('batch_size', 16,
+tf.app.flags.DEFINE_integer('batch_size', 1,
                             "Number of samples per batch.")
 
-tf.app.flags.DEFINE_string('checkpoint_dir', 'checkpoint',
-                           "Output folder where checkpoints are dumped.")
+tf.app.flags.DEFINE_string('checkpoint_dir', './checkpoints/',
+                           "./checkpoints/")
 
 tf.app.flags.DEFINE_integer('checkpoint_period', 10000,
                             "Number of batches in between checkpoints")
 
-tf.app.flags.DEFINE_string('dataset', 'dataset',
-                           "Path to the dataset directory.")
+tf.app.flags.DEFINE_string('dataset', './blur_dataset/data',
+                           'Directory for the dataset')
 
 tf.app.flags.DEFINE_float('epsilon', 1e-8,
                           "Fuzz term to avoid numerical instability")
 
-tf.app.flags.DEFINE_string('run', 'demo',
-                            "Which operation to run. [demo|train]")
+tf.app.flags.DEFINE_string('run', 'train',
+                            "demo or train")
 
 tf.app.flags.DEFINE_float('gene_l1_factor', .90,
                           "Multiplier for generator L1 loss term")
@@ -46,7 +46,7 @@ tf.app.flags.DEFINE_integer('learning_rate_half_life', 5000,
 tf.app.flags.DEFINE_bool('log_device_placement', False,
                          "Log the device where variables are placed.")
 
-tf.app.flags.DEFINE_integer('sample_size', 64,
+tf.app.flags.DEFINE_integer('sample_size', 300,
                             "Image sample size in pixels. Range [64,128]")
 
 tf.app.flags.DEFINE_integer('summary_period', 200,
@@ -57,7 +57,7 @@ tf.app.flags.DEFINE_integer('random_seed', 0,
 
 tf.app.flags.DEFINE_integer('test_vectors', 16,
                             """Number of features to use for testing""")
-                            
+
 tf.app.flags.DEFINE_string('train_dir', 'train',
                            "Output folder where training logs are dumped.")
 
@@ -68,7 +68,7 @@ def prepare_dirs(delete_train_dir=False):
     # Create checkpoint dir (do not delete anything)
     if not tf.gfile.Exists(FLAGS.checkpoint_dir):
         tf.gfile.MakeDirs(FLAGS.checkpoint_dir)
-    
+
     # Cleanup train dir
     if delete_train_dir:
         if tf.gfile.Exists(FLAGS.train_dir):
@@ -80,10 +80,11 @@ def prepare_dirs(delete_train_dir=False):
        not tf.gfile.IsDirectory(FLAGS.dataset):
         raise FileNotFoundError("Could not find folder `%s'" % (FLAGS.dataset,))
 
-    filenames = tf.gfile.ListDirectory(FLAGS.dataset)
-    filenames = sorted(filenames)
-    random.shuffle(filenames)
-    filenames = [os.path.join(FLAGS.dataset, f) for f in filenames]
+
+    features = tf.gfile.Glob(FLAGS.dataset + "/*_orig.png")[:200]
+    labels = tf.gfile.Glob(FLAGS.dataset + "/*_blur.png")[:200]
+
+    filenames = (features,labels)
 
     return filenames
 
@@ -96,7 +97,7 @@ def setup_tensorflow():
     # Initialize rng with a deterministic seed
     with sess.graph.as_default():
         tf.set_random_seed(FLAGS.random_seed)
-        
+
     random.seed(FLAGS.random_seed)
     np.random.seed(FLAGS.random_seed)
 
@@ -142,11 +143,12 @@ def _train():
     sess, summary_writer = setup_tensorflow()
 
     # Prepare directories
-    all_filenames = prepare_dirs(delete_train_dir=True)
+    features,labels = prepare_dirs(delete_train_dir=True)
+
 
     # Separate training and test sets
-    train_filenames = all_filenames[:-FLAGS.test_vectors]
-    test_filenames  = all_filenames[-FLAGS.test_vectors:]
+    train_filenames = (features[:-FLAGS.test_vectors],labels[:-FLAGS.test_vectors])
+    test_filenames  = (features[-FLAGS.test_vectors:],labels[-FLAGS.test_vectors:])
 
     # TBD: Maybe download dataset here
 
@@ -155,21 +157,21 @@ def _train():
     test_features,  test_labels  = srez_input.setup_inputs(sess, test_filenames)
 
     # Add some noise during training (think denoising autoencoders)
-    noise_level = .03
-    noisy_train_features = train_features + \
-                           tf.random_normal(train_features.get_shape(), stddev=noise_level)
+    # noise_level = .03
+    # noisy_train_features = train_features + \
+    #                        tf.random_normal(train_features.get_shape(), stddev=noise_level)
 
     # Create and initialize model
     [gene_minput, gene_moutput,
      gene_output, gene_var_list,
      disc_real_output, disc_fake_output, disc_var_list] = \
-            srez_model.create_model(sess, noisy_train_features, train_labels)
+            srez_model.create_model(sess, train_features, train_labels)
 
     gene_loss = srez_model.create_generator_loss(disc_fake_output, gene_output, train_features)
     disc_real_loss, disc_fake_loss = \
                      srez_model.create_discriminator_loss(disc_real_output, disc_fake_output)
     disc_loss = tf.add(disc_real_loss, disc_fake_loss, name='disc_loss')
-    
+
     (global_step, learning_rate, gene_minimize, disc_minimize) = \
             srez_model.create_optimizers(gene_loss, gene_var_list,
                                          disc_loss, disc_var_list)

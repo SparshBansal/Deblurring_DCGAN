@@ -7,15 +7,15 @@ class Model:
     """A neural network model.
 
     Currently only supports a feedforward architecture."""
-    
+
     def __init__(self, name, features):
         self.name = name
-        self.outputs = [features]
+        self.outputs = [tf.cast(features,tf.float32)]
 
     def _get_layer_str(self, layer=None):
         if layer is None:
             layer = self.get_num_layers()
-        
+
         return '%s_L%03d' % (self.name, layer+1)
 
     def _get_num_inputs(self):
@@ -49,7 +49,7 @@ class Model:
         # TBD: This appears to be very flaky, often raising InvalidArgumentError internally
         with tf.variable_scope(self._get_layer_str()):
             out = tf.contrib.layers.batch_norm(self.get_output(), scale=scale)
-        
+
         self.outputs.append(out)
         return self
 
@@ -67,12 +67,12 @@ class Model:
         """Adds a dense linear layer to this model.
 
         Uses Glorot 2010 initialization assuming linear activation."""
-        
+
         assert len(self.get_output().get_shape()) == 2, "Previous layer must be 2-dimensional (batch, channels)"
 
         with tf.variable_scope(self._get_layer_str()):
             prev_units = self._get_num_inputs()
-            
+
             # Weight term
             initw   = self._glorot_initializer(prev_units, num_units,
                                                stddev_factor=stddev_factor)
@@ -94,7 +94,7 @@ class Model:
         with tf.variable_scope(self._get_layer_str()):
             prev_units = self._get_num_inputs()
             out = tf.nn.sigmoid(self.get_output())
-        
+
         self.outputs.append(out)
         return self
 
@@ -107,7 +107,7 @@ class Model:
             acc = tf.reduce_sum(this_input, reduction_indices=reduction_indices, keep_dims=True)
             out = this_input / (acc+FLAGS.epsilon)
             #out = tf.verify_tensor_all_finite(out, "add_softmax failed; is sum equal to zero?")
-        
+
         self.outputs.append(out)
         return self
 
@@ -118,7 +118,7 @@ class Model:
             out = tf.nn.relu(self.get_output())
 
         self.outputs.append(out)
-        return self        
+        return self
 
     def add_elu(self):
         """Adds a ELU activation function to this model"""
@@ -137,7 +137,7 @@ class Model:
             t2  = .5 * (1 - leak)
             out = t1 * self.get_output() + \
                   t2 * tf.abs(self.get_output())
-            
+
         self.outputs.append(out)
         return self
 
@@ -145,10 +145,10 @@ class Model:
         """Adds a 2D convolutional layer."""
 
         assert len(self.get_output().get_shape()) == 4 and "Previous layer must be 4-dimensional (batch, width, height, channels)"
-        
+
         with tf.variable_scope(self._get_layer_str()):
             prev_units = self._get_num_inputs()
-            
+
             # Weight term and convolution
             initw  = self._glorot_initializer_conv2d(prev_units, num_units,
                                                      mapsize,
@@ -162,7 +162,7 @@ class Model:
             initb  = tf.constant(0.0, shape=[num_units])
             bias   = tf.get_variable('bias', initializer=initb)
             out    = tf.nn.bias_add(out, bias)
-            
+
         self.outputs.append(out)
         return self
 
@@ -173,7 +173,7 @@ class Model:
 
         with tf.variable_scope(self._get_layer_str()):
             prev_units = self._get_num_inputs()
-            
+
             # Weight term and convolution
             initw  = self._glorot_initializer_conv2d(prev_units, num_units,
                                                      mapsize,
@@ -194,7 +194,7 @@ class Model:
             initb  = tf.constant(0.0, shape=[num_units])
             bias   = tf.get_variable('bias', initializer=initb)
             out    = tf.nn.bias_add(out, bias)
-            
+
         self.outputs.append(out)
         return self
 
@@ -270,7 +270,7 @@ class Model:
             #print("%s %s" % (prev_shape, term_shape))
             assert prev_shape == term_shape and "Can't sum terms with a different size"
             out = tf.add(self.get_output(), term)
-        
+
         self.outputs.append(out)
         return self
 
@@ -283,7 +283,7 @@ class Model:
             assert len(reduction_indices) > 2 and "Can't average a (batch, activation) tensor"
             reduction_indices = reduction_indices[1:-1]
             out = tf.reduce_mean(self.get_output(), reduction_indices=reduction_indices)
-        
+
         self.outputs.append(out)
         return self
 
@@ -295,7 +295,7 @@ class Model:
         out  = tf.image.resize_nearest_neighbor(self.get_output(), size)
 
         self.outputs.append(out)
-        return self        
+        return self
 
     def get_output(self):
         """Returns the output from the topmost layer of the network"""
@@ -327,6 +327,7 @@ def _discriminator_model(sess, features, disc_input):
     layers  = [64, 128, 256, 512]
 
     old_vars = tf.all_variables()
+    disc_input = tf.cast(disc_input,tf.float32)
 
     model = Model('DIS', 2*disc_input - 1)
 
@@ -376,8 +377,7 @@ def _generator_model(sess, features, labels, channels):
 
         # Spatial upscale (see http://distill.pub/2016/deconv-checkerboard/)
         # and transposed convolution
-        model.add_upscale()
-        
+
         model.add_batch_norm()
         model.add_relu()
         model.add_conv2d_transpose(nunits, mapsize=mapsize, stride=1, stddev_factor=1.)
@@ -395,7 +395,7 @@ def _generator_model(sess, features, labels, channels):
     # Last layer is sigmoid with no batch normalization
     model.add_conv2d(channels, mapsize=1, stride=1, stddev_factor=1.)
     model.add_sigmoid()
-    
+
     new_vars  = tf.all_variables()
     gene_vars = list(set(new_vars) - set(old_vars))
 
@@ -417,7 +417,7 @@ def create_model(sess, features, labels):
         scope.reuse_variables()
 
         gene_moutput, _ = _generator_model(sess, gene_minput, labels, channels)
-    
+
     # Discriminator with real data
     disc_real_input = tf.identity(labels, name='disc_real_input')
 
@@ -427,7 +427,7 @@ def create_model(sess, features, labels):
                 _discriminator_model(sess, features, disc_real_input)
 
         scope.reuse_variables()
-            
+
         disc_fake_output, _ = _discriminator_model(sess, features, gene_output)
 
     return [gene_minput,      gene_moutput,
@@ -441,7 +441,7 @@ def _downscale(images, K):
     arr[:,:,1,1] = 1.0/(K*K)
     arr[:,:,2,2] = 1.0/(K*K)
     dowscale_weight = tf.constant(arr, dtype=tf.float32)
-    
+
     downscaled = tf.nn.conv2d(images, dowscale_weight,
                               strides=[1, K, K, 1],
                               padding='SAME')
@@ -454,32 +454,30 @@ def create_generator_loss(disc_output, gene_output, features):
 
     # I.e. does the result look like the feature?
     K = int(gene_output.get_shape()[1])//int(features.get_shape()[1])
-    assert K == 2 or K == 4 or K == 8    
-    downscaled = _downscale(gene_output, K)
-    
-    gene_l1_loss  = tf.reduce_mean(tf.abs(downscaled - features), name='gene_l1_loss')
+
+    gene_l1_loss  = tf.reduce_mean(tf.abs(gene_output - tf.cast(features,tf.float32)), name='gene_l1_loss')
 
     gene_loss     = tf.add((1.0 - FLAGS.gene_l1_factor) * gene_ce_loss,
                            FLAGS.gene_l1_factor * gene_l1_loss, name='gene_loss')
-    
+
     return gene_loss
 
 def create_discriminator_loss(disc_real_output, disc_fake_output):
     # I.e. did we correctly identify the input as real or not?
     cross_entropy_real = tf.nn.sigmoid_cross_entropy_with_logits(disc_real_output, tf.ones_like(disc_real_output))
     disc_real_loss     = tf.reduce_mean(cross_entropy_real, name='disc_real_loss')
-    
+
     cross_entropy_fake = tf.nn.sigmoid_cross_entropy_with_logits(disc_fake_output, tf.zeros_like(disc_fake_output))
     disc_fake_loss     = tf.reduce_mean(cross_entropy_fake, name='disc_fake_loss')
 
     return disc_real_loss, disc_fake_loss
 
 def create_optimizers(gene_loss, gene_var_list,
-                      disc_loss, disc_var_list):    
+                      disc_loss, disc_var_list):
     # TBD: Does this global step variable need to be manually incremented? I think so.
     global_step    = tf.Variable(0, dtype=tf.int64,   trainable=False, name='global_step')
     learning_rate  = tf.placeholder(dtype=tf.float32, name='learning_rate')
-    
+
     gene_opti = tf.train.AdamOptimizer(learning_rate=learning_rate,
                                        beta1=FLAGS.learning_beta1,
                                        name='gene_optimizer')
@@ -488,7 +486,7 @@ def create_optimizers(gene_loss, gene_var_list,
                                        name='disc_optimizer')
 
     gene_minimize = gene_opti.minimize(gene_loss, var_list=gene_var_list, name='gene_loss_minimize', global_step=global_step)
-    
+
     disc_minimize     = disc_opti.minimize(disc_loss, var_list=disc_var_list, name='disc_loss_minimize', global_step=global_step)
-    
+
     return (global_step, learning_rate, gene_minimize, disc_minimize)
